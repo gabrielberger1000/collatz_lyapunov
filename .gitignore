@@ -1,0 +1,20 @@
+# Model checkpoints
+*.pth
+checkpoints/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+
+# Large eval sets (keep the 50k one, ignore larger)
+collatz_eval_100k.csv
+collatz_eval_*M.csv
