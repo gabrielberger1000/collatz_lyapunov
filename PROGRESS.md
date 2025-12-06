@@ -4,9 +4,54 @@
 
 | Metric | Value | Run |
 |--------|-------|-----|
+| Trajectory Violations | 73/429 (17.0%) | Run 4 |
 | Growth Weighted Pass % | 98.31% | Run 3 |
-| Test Trajectory Violations | 80/429 (18.6%) | Run 3 |
 | Margin Min (Growth) | -0.52 | Run 3 |
+
+---
+
+## Run 4 — 2024-12-03 (Multi-step T4 Constraint)
+
+**Config:**
+```bash
+modal run --detach train_modal.py --args "--epochs 100000 --layers 2048,1024,1024,512,512,512,256,128,64 --curriculum --ramp-len 50000 --start-seeds 0 --use-t4 --mine-negatives --mine-interval 10000"
+```
+
+**Model:** 4,405,250 parameters | **Platform:** Modal T4 GPU | **Constraints:** T1=True, T4=True
+
+| Epoch | Loss | Pass% | Wtd% | Growth% | GrWtd% | Traj Viol | Notes |
+|-------|------|-------|------|---------|--------|-----------|-------|
+| 5000 | 0.059 | 91.77 | 91.42 | 99.05 | 98.88 | 131/429 (30.5%) | |
+| 10000 | 0.198 | 92.90 | 91.88 | 93.71 | 93.01 | 127/429 (29.6%) | 111 ✓ |
+| 15000 | 0.032 | 94.94 | 94.35 | 99.24 | 99.00 | 96/429 (22.4%) | |
+| 20000 | 0.084 | 96.28 | 95.69 | 99.34 | 99.13 | 81/429 (18.9%) | 27 ✓ |
+| 25000 | 0.041 | 95.63 | 94.93 | 98.66 | 98.28 | 75/429 (17.5%) | Best traj |
+| 50000 | 0.080 | 95.66 | 94.97 | 98.64 | 98.24 | 74/429 (17.2%) | |
+| 80000 | 0.082 | 95.68 | 95.00 | 98.64 | 98.25 | 71/429 (16.6%) | Best traj |
+| 100000 | — | 95.68 | 95.00 | 98.62 | 98.22 | 73/429 (17.0%) | Final |
+
+**Final Trajectory Results:**
+| Seed | Violations | Steps | Worst Margin | Status |
+|------|------------|-------|--------------|--------|
+| 111 | 0 | 24 | — | ✓ |
+| 27 | 0 | 41 | — | ✓ |
+| 703 | 11 | 62 | -0.25 | ✗ |
+| 26623 | 19 | 113 | -0.82 | ✗ |
+| 626331 | 43 | 189 | -1.22 | ✗ |
+
+**Observations:**
+- **T4 constraint reduced violation count** — 73 vs 80 in Run 3
+- **But margins got worse on hardest seeds** — 626331 worst margin -1.22 vs -0.66 in Run 3
+- **703 improved significantly** — only 11 violations with -0.25 worst margin
+- **Tradeoff**: fewer violations but less confident predictions
+
+**Comparison to Run 3:**
+| Metric | Run 3 | Run 4 | Change |
+|--------|-------|-------|--------|
+| Traj violations | 80/429 | 73/429 | ✓ -9% |
+| Worst margin (703) | -0.66 | -0.25 | ✓ +62% |
+| Worst margin (26623) | -0.50 | -0.82 | ✗ -64% |
+| Worst margin (626331) | -0.66 | -1.22 | ✗ -85% |
 
 ---
 
@@ -121,11 +166,11 @@ python collatz.py \
 
 ### High Priority
 - [x] **Faster curriculum** — `--ramp-len 50000` ✓ Helped (Run 3)
-- [ ] **Multi-step constraints** — `--use-t4` to enforce V decreases over 4 steps (Run 4 in progress)
+- [x] **Multi-step constraints** — `--use-t4` ✓ Fewer violations but worse margins on hardest seeds (Run 4)
 - [ ] **Disable mining** — compare to baseline without mining disruption
+- [ ] **Adaptive beta** — `--target-type adaptive` to learn drift coefficient
 
 ### Medium Priority
-- [ ] `--target-type adaptive` — let model learn drift coefficient
 - [ ] `--use-t4 --use-t8` — both multi-step constraints together
 - [ ] Smaller model — current one may be overfitting
 - [ ] Larger lookahead — `--lookahead 20`
@@ -133,12 +178,13 @@ python collatz.py \
 ### Investigate
 - [ ] Why are decay steps failing more than growth steps?
 - [ ] What's special about seeds 703, 26623, 626331 that makes them hard?
+- [ ] Why did T4 help 703 but hurt 626331?
 
 ---
 
-## Failed Experiments
+## Mixed Results
 
-(None yet — document what doesn't work)
+**T4 Multi-step constraint (Run 4):** Reduced total violations (73 vs 80) but made worst-case margins worse on the hardest seeds. The constraint seems to spread the "effort" differently — 703 got much better while 626331 got worse. Not a clear win.
 
 ---
 
@@ -148,15 +194,15 @@ python collatz.py \
 
 The test seeds span trajectory difficulty:
 
-| Seed | Length | Max Excursion | Excursion Ratio | Status |
-|------|--------|---------------|-----------------|--------|
-| 111 | 25 | 3,077 | 27.7× | ✓ Solved |
-| 27 | 42 | 9,232 | 114.0× | ✓ Solved |
-| 703 | 63 | 83,501 | 118.8× | ✗ Stuck |
-| 26623 | 114 | 35,452,673 | 1,331.7× | ✗ Stuck |
-| 626331 | 190 | 2,407,427,729 | 3,843.7× | ✗ Stuck |
+| Seed | Length | Max Excursion | Excursion Ratio | Best Run | Status |
+|------|--------|---------------|-----------------|----------|--------|
+| 111 | 25 | 3,077 | 27.7× | Run 3+ | ✓ Solved |
+| 27 | 42 | 9,232 | 114.0× | Run 3+ | ✓ Solved |
+| 703 | 63 | 83,501 | 118.8× | Run 4 (11 viol, -0.25) | ✗ Stuck |
+| 26623 | 114 | 35,452,673 | 1,331.7× | Run 4 (19 viol, -0.82) | ✗ Stuck |
+| 626331 | 190 | 2,407,427,729 | 3,843.7× | Run 3 (47 viol, -0.66) | ✗ Stuck |
 
-The pattern: longer trajectories with higher excursion ratios remain unsolved.
+The pattern: longer trajectories with higher excursion ratios remain unsolved. Note that 703 responds better to T4 constraint while 626331 does not.
 
 ### Mining Destabilization
 
@@ -169,13 +215,18 @@ Run 3 (epoch 10k): Much milder spike — 27.3% → 30.5% violations. The faster 
 
 ### The Plateau Problem
 
-Both Run 2 and Run 3 plateau after exhausting training seeds:
+All runs plateau after exhausting training seeds:
 - Run 2: Plateaued at epoch 40k
-- Run 3: Plateaued at epoch 50k (all 49 seeds exhausted)
+- Run 3: Plateaued at epoch 50k
+- Run 4: Plateaued at epoch 50k
 
 Final metrics barely move after plateau:
 - Pass rate: ~95.7% ± 0.1%
-- Trajectory violations: ~80/429
-- Growth margin min: ~-0.52
+- Trajectory violations: 73-80/429
+- Growth margin min: ~-0.5 to -0.65
 
-The hard trajectories (703, 26623, 626331) have consistent ~0.5-0.7 margin violations that don't improve. The model may need a different inductive bias (multi-step constraints?) to break through.
+The hard trajectories (703, 26623, 626331) remain unsolved. Interestingly, different approaches help different seeds:
+- T4 constraint helped 703 (margins improved from -0.66 to -0.25)
+- T4 constraint hurt 626331 (margins worsened from -0.66 to -1.22)
+
+This suggests these seeds have structurally different challenges.
