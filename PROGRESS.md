@@ -4,9 +4,55 @@
 
 | Metric | Value | Run |
 |--------|-------|-----|
-| Trajectory Violations | 73/429 (17.0%) | Run 4 |
-| Growth Weighted Pass % | 98.31% | Run 3 |
-| Margin Min (Growth) | -0.52 | Run 3 |
+| Trajectory Violations | 64/429 (14.9%) | Run 5 |
+| Overall Pass % | 97.22% | Run 5 |
+| Growth Weighted Pass % | 99.71% | Run 5 |
+
+---
+
+## Run 5 — 2024-12-06 (No Mining) ⭐ NEW BEST
+
+**Config:**
+```bash
+modal run --detach train_modal.py --args "--epochs 100000 --layers 2048,1024,1024,512,512,512,256,128,64 --curriculum --ramp-len 50000 --start-seeds 0"
+```
+
+**Model:** 4,405,250 parameters | **Platform:** Modal T4 GPU | **Mining:** Disabled
+
+| Epoch | Loss | Pass% | Wtd% | Growth% | GrWtd% | Traj Viol | Notes |
+|-------|------|-------|------|---------|--------|-----------|-------|
+| 5000 | 0.034 | 92.33 | 91.82 | 98.88 | 98.67 | 108/429 (25.2%) | 111 ✓ |
+| 10000 | 0.048 | 91.87 | 91.61 | 98.97 | 98.83 | 118/429 (27.5%) | |
+| 15000 | 0.018 | 95.28 | 94.62 | 99.28 | 99.11 | 92/429 (21.4%) | |
+| 20000 | 0.010 | 96.41 | 95.84 | 99.54 | 99.44 | 80/429 (18.6%) | 27 ✓ |
+| 25000 | 0.011 | 96.95 | 96.38 | 99.62 | 99.52 | 75/429 (17.5%) | |
+| 50000 | 0.019 | 97.22 | 96.69 | 99.76 | 99.70 | 64/429 (14.9%) | Best |
+| 75000 | 0.022 | 97.22 | 96.69 | 99.76 | 99.70 | 64/429 (14.9%) | Plateaued |
+| 100000 | — | 97.22 | 96.70 | 99.77 | 99.71 | 64/429 (14.9%) | Final |
+
+**Final Trajectory Results:**
+| Seed | Violations | Steps | Worst Margin | Status |
+|------|------------|-------|--------------|--------|
+| 111 | 0 | 24 | — | ✓ |
+| 27 | 0 | 41 | — | ✓ |
+| 703 | 11 | 62 | -0.52 | ✗ |
+| 26623 | 16 | 113 | -1.30 | ✗ |
+| 626331 | 37 | 189 | -1.50 | ✗ |
+
+**Observations:**
+- **Mining was hurting, not helping!** Disabling it gave best results across the board
+- **Much lower loss** — 0.02 vs 0.06-0.08 with mining
+- **More stable training** — no destabilization spikes
+- **Best trajectory violations** — 64 vs 73-80 in previous runs
+- **Higher pass rates** — 97.22% overall, 99.77% growth
+
+**Comparison to previous runs:**
+| Metric | Run 3 (mining) | Run 4 (T4+mining) | Run 5 (no mining) |
+|--------|----------------|-------------------|-------------------|
+| Traj violations | 80/429 | 73/429 | **64/429** |
+| Overall pass % | 95.68% | 95.68% | **97.22%** |
+| Growth pass % | 98.72% | 98.62% | **99.77%** |
+| Final loss | ~0.06 | ~0.08 | **~0.02** |
 
 ---
 
@@ -166,14 +212,15 @@ python collatz.py \
 
 ### High Priority
 - [x] **Faster curriculum** — `--ramp-len 50000` ✓ Helped (Run 3)
-- [x] **Multi-step constraints** — `--use-t4` ✓ Fewer violations but worse margins on hardest seeds (Run 4)
-- [ ] **Disable mining** — compare to baseline without mining disruption
-- [ ] **Adaptive beta** — `--target-type adaptive` to learn drift coefficient
+- [x] **Multi-step constraints** — `--use-t4` Mixed results (Run 4)
+- [x] **Disable mining** — ✓ **Significant improvement!** (Run 5)
+- [ ] **Larger lookahead** — `--lookahead 20` (Run 6 in progress)
 
 ### Medium Priority
-- [ ] `--use-t4 --use-t8` — both multi-step constraints together
+- [ ] **Adaptive beta** — `--target-type adaptive` to learn drift coefficient
+- [ ] **Gentler mining** — less frequent, fewer samples, start later (revisit after lookahead)
+- [ ] `--use-t4 --use-t8` — both multi-step constraints together (without mining)
 - [ ] Smaller model — current one may be overfitting
-- [ ] Larger lookahead — `--lookahead 20`
 
 ### Investigate
 - [ ] Why are decay steps failing more than growth steps?
@@ -182,7 +229,9 @@ python collatz.py \
 
 ---
 
-## Mixed Results
+## Key Findings
+
+**Mining was harmful (Run 5):** Disabling mining gave the best results — 64 violations vs 73-80 with mining. The aggressive injection of 50 hard negatives every 10k epochs destabilized training. May revisit with gentler settings (less frequent, fewer samples, start later).
 
 **T4 Multi-step constraint (Run 4):** Reduced total violations (73 vs 80) but made worst-case margins worse on the hardest seeds. The constraint seems to spread the "effort" differently — 703 got much better while 626331 got worse. Not a clear win.
 
@@ -198,35 +247,33 @@ The test seeds span trajectory difficulty:
 |------|--------|---------------|-----------------|----------|--------|
 | 111 | 25 | 3,077 | 27.7× | Run 3+ | ✓ Solved |
 | 27 | 42 | 9,232 | 114.0× | Run 3+ | ✓ Solved |
-| 703 | 63 | 83,501 | 118.8× | Run 4 (11 viol, -0.25) | ✗ Stuck |
-| 26623 | 114 | 35,452,673 | 1,331.7× | Run 4 (19 viol, -0.82) | ✗ Stuck |
-| 626331 | 190 | 2,407,427,729 | 3,843.7× | Run 3 (47 viol, -0.66) | ✗ Stuck |
+| 703 | 63 | 83,501 | 118.8× | Run 5 (11 viol, -0.52) | ✗ Stuck |
+| 26623 | 114 | 35,452,673 | 1,331.7× | Run 5 (16 viol, -1.30) | ✗ Stuck |
+| 626331 | 190 | 2,407,427,729 | 3,843.7× | Run 5 (37 viol, -1.50) | ✗ Stuck |
 
-The pattern: longer trajectories with higher excursion ratios remain unsolved. Note that 703 responds better to T4 constraint while 626331 does not.
+The pattern: longer trajectories with higher excursion ratios remain unsolved. Current lookahead (10 steps) may be insufficient for the longest trajectories.
 
-### Mining Destabilization
+### Mining Destabilization (Deprioritized)
 
-Run 2 (epoch 10k): Mining found 3088 violations and added 50 hard negatives. This caused:
-- Trajectory violations spiked from 25.9% → 71.3%
-- Pass rate dropped from 93% → 84%
-- Took 5k epochs to recover
+Mining was too aggressive in Runs 2-4:
+- 50 hard negatives injected every 10k epochs
+- Caused destabilization spikes (especially Run 2: 25.9% → 71.3% violations)
+- Run 5 showed best results without mining
 
-Run 3 (epoch 10k): Much milder spike — 27.3% → 30.5% violations. The faster curriculum may have helped the model be more robust to hard negatives.
+May revisit with gentler settings:
+- Less frequent (`--mine-interval 25000`)
+- Fewer samples (would need code change)
+- Start after curriculum exhausts (`--mine-start-epoch 50000`, would need code change)
 
 ### The Plateau Problem
 
-All runs plateau after exhausting training seeds:
-- Run 2: Plateaued at epoch 40k
-- Run 3: Plateaued at epoch 50k
-- Run 4: Plateaued at epoch 50k
+All runs plateau after exhausting training seeds (~50k epochs):
 
-Final metrics barely move after plateau:
-- Pass rate: ~95.7% ± 0.1%
-- Trajectory violations: 73-80/429
-- Growth margin min: ~-0.5 to -0.65
+| Run | Final Violations | Final Pass % | Notes |
+|-----|------------------|--------------|-------|
+| Run 2 | 87/429 | 95.43% | Mining + slow curriculum |
+| Run 3 | 80/429 | 95.68% | Mining + fast curriculum |
+| Run 4 | 73/429 | 95.68% | Mining + T4 |
+| Run 5 | 64/429 | 97.22% | **No mining** ⭐ |
 
-The hard trajectories (703, 26623, 626331) remain unsolved. Interestingly, different approaches help different seeds:
-- T4 constraint helped 703 (margins improved from -0.66 to -0.25)
-- T4 constraint hurt 626331 (margins worsened from -0.66 to -1.22)
-
-This suggests these seeds have structurally different challenges.
+The hard trajectories (703, 26623, 626331) remain unsolved but violation counts are improving. Next test: increased lookahead to give model more trajectory context.
