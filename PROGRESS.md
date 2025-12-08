@@ -4,13 +4,58 @@
 
 | Metric | Value | Run |
 |--------|-------|-----|
-| Trajectory Violations | 58/429 (13.5%) | Run 6 |
-| Overall Pass % | 97.91% | Run 6 |
-| Growth Weighted Pass % | 99.75% | Run 6 |
+| Trajectory Violations | 14/429 (3.3%) | Run 7 |
+| Overall Pass % | 99.68% | Run 7 |
+| Growth Weighted Pass % | 99.95% | Run 7 |
 
 ---
 
-## Run 6 — 2024-12-07 (Lookahead 20) ⭐ NEW BEST
+## Run 7 — 2024-12-08 (Lookahead 100) ⭐ BEST
+
+**Config:**
+```bash
+modal run --detach train_modal.py --args "--epochs 100000 --layers 2048,1024,1024,512,512,512,256,128,64 --curriculum --ramp-len 50000 --start-seeds 0 --lookahead 100"
+```
+
+**Model:** 4,589,570 parameters | **Platform:** Modal T4 GPU | **Lookahead:** 100
+
+| Epoch | Loss | Pass% | Wtd% | Growth% | GrWtd% | Traj Viol | Notes |
+|-------|------|-------|------|---------|--------|-----------|-------|
+| 5000 | 0.170 | 90.09 | 90.31 | 98.53 | 98.36 | 127/429 (29.6%) | |
+| 10000 | 0.062 | 92.57 | 92.80 | 98.68 | 98.58 | 64/429 (14.9%) | 111 ✓, 27 ✓ |
+| 15000 | 0.038 | 99.37 | 99.26 | 99.92 | 99.89 | 21/429 (4.9%) | 703 down to 1 |
+| 20000 | 0.039 | 99.60 | 99.51 | 99.92 | 99.90 | 17/429 (4.0%) | **703 ✓** |
+| 25000 | 0.039 | 99.66 | 99.58 | 99.98 | 99.97 | 18/429 (4.2%) | |
+| 40000 | 0.034 | 99.68 | 99.60 | 99.96 | 99.95 | 16/429 (3.7%) | |
+| 45000 | 0.031 | 99.68 | 99.60 | 99.96 | 99.95 | 14/429 (3.3%) | Best |
+
+**Final Trajectory Results:**
+| Seed | Violations | Steps | Worst Margin | Status |
+|------|------------|-------|--------------|--------|
+| 111 | 0 | 24 | — | ✓ |
+| 27 | 0 | 41 | — | ✓ |
+| 703 | 0 | 62 | — | ✓ **SOLVED** |
+| 26623 | 1 | 113 | -0.06 | Almost! |
+| 626331 | 13 | 189 | -0.41 | ✗ |
+
+**Observations:**
+- **Massive improvement** — 14 violations vs 58 in Run 6 (76% reduction)
+- **703 completely solved** — 0 violations (was 8 in Run 6)
+- **26623 nearly solved** — only 1 violation with tiny margin (-0.06)
+- **626331 greatly improved** — 13 violations vs 32 (59% reduction)
+- **99.68% overall pass rate** — up from 97.91%
+- **Confirms hypothesis**: lookahead matters enormously, no ceiling observed yet
+
+**Lookahead Progression:**
+| Lookahead | Violations | 703 | 26623 | 626331 |
+|-----------|------------|-----|-------|--------|
+| 10 | 64/429 | 11 | 16 | 37 |
+| 20 | 58/429 | 8 | 18 | 32 |
+| 100 | **14/429** | **0** | **1** | **13** |
+
+---
+
+## Run 6 — 2024-12-07 (Lookahead 20)
 
 **Config:**
 ```bash
@@ -257,32 +302,37 @@ python collatz.py \
 
 ## Ideas to Try
 
-### High Priority
+### Completed
 - [x] **Faster curriculum** — `--ramp-len 50000` ✓ Helped (Run 3)
 - [x] **Multi-step constraints** — `--use-t4` Mixed results (Run 4)
-- [x] **Disable mining** — ✓ **Significant improvement!** (Run 5)
-- [x] **Larger lookahead** — `--lookahead 20` ✓ **Helped!** (Run 6)
-- [ ] **Even larger lookahead** — `--lookahead 30` to see if trend continues
+- [x] **Disable mining** — ✓ Significant improvement (Run 5)
+- [x] **Lookahead 20** — ✓ Helped (Run 6)
+- [x] **Lookahead 100** — ✓ **Major breakthrough!** (Run 7)
 
-### Medium Priority
-- [ ] **Adaptive beta** — `--target-type adaptive` to learn drift coefficient
-- [ ] **Gentler mining** — less frequent, fewer samples, start later (revisit after lookahead experiments)
-- [ ] `--use-t4` without mining — see if T4 helps when training is stable
-- [ ] Smaller model — current one may be overfitting
+### Future Directions (if continuing)
+- [ ] **Lookahead 200** — would it solve 626331?
+- [ ] **Interpretability** — what features does the model actually use?
+- [ ] **Failure analysis** — where exactly in trajectories do violations occur?
+- [ ] **Feature ablation** — which inputs matter most?
 
-### Investigate
-- [ ] Why are decay steps failing more than growth steps?
-- [ ] What's special about seeds 703, 26623, 626331 that makes them hard?
+### Deprioritized
+- [ ] Adaptive beta
+- [ ] Gentler mining
+- [ ] Smaller model
 
 ---
 
 ## Key Findings
 
-**Lookahead matters (Run 6):** Increasing from 10 to 20 steps reduced violations from 64 to 58. The longest trajectory (626331, 190 steps) benefited most: 37 → 32 violations, margins improved from -1.50 to -1.17. Worth testing lookahead 30.
+**Lookahead is the key variable (Run 7):** Increasing from 20 to 100 steps reduced violations from 58 to 14 — a 76% improvement. 703 is now completely solved, 26623 has only 1 violation. This strongly suggests that constructing a Lyapunov function requires knowing many steps of the future trajectory.
 
-**Mining was harmful (Run 5):** Disabling mining gave a big improvement — 64 violations vs 73-80 with mining. The aggressive injection of 50 hard negatives every 10k epochs destabilized training. May revisit with gentler settings.
+**No ceiling observed:** The progression LA=10→20→100 shows continued improvement with no sign of diminishing returns. The information horizon for V(n) extends at least 50-100 steps into the future.
 
-**T4 Multi-step constraint (Run 4):** Reduced total violations (73 vs 80) but made worst-case margins worse on the hardest seeds. Not a clear win.
+**Implication for closed-form solutions:** If V(n) truly requires ~100 steps of lookahead, this explains why no simple closed-form Lyapunov function has been found. Any such function would need to encode long-range trajectory information, not just local properties of n.
+
+**Mining was harmful (Run 5):** Disabling mining gave a big improvement. Simpler training is better.
+
+**T4 Multi-step constraint (Run 4):** Mixed results, not clearly helpful.
 
 ---
 
@@ -296,11 +346,11 @@ The test seeds span trajectory difficulty:
 |------|--------|---------------|-----------------|----------|--------|
 | 111 | 25 | 3,077 | 27.7× | Run 3+ | ✓ Solved |
 | 27 | 42 | 9,232 | 114.0× | Run 3+ | ✓ Solved |
-| 703 | 63 | 83,501 | 118.8× | Run 6 (8 viol, -0.50) | ✗ Stuck |
-| 26623 | 114 | 35,452,673 | 1,331.7× | Run 5 (16 viol) / Run 6 (-0.79 margin) | ✗ Stuck |
-| 626331 | 190 | 2,407,427,729 | 3,843.7× | Run 6 (32 viol, -1.17) | ✗ Stuck |
+| 703 | 63 | 83,501 | 118.8× | **Run 7 (0 viol)** | ✓ **Solved** |
+| 26623 | 114 | 35,452,673 | 1,331.7× | Run 7 (1 viol, -0.06) | Almost! |
+| 626331 | 190 | 2,407,427,729 | 3,843.7× | Run 7 (13 viol, -0.41) | ✗ Stuck |
 
-Longer lookahead helped the longest trajectories most. 626331 (190 steps) improved from 37 to 32 violations when lookahead increased from 10 to 20.
+Lookahead 100 solved 703 completely and nearly solved 26623. The remaining challenge is 626331 with its 190-step trajectory — even 100 steps of lookahead only covers ~53% of its future.
 
 ### Mining Destabilization (Deprioritized)
 
@@ -318,12 +368,13 @@ May revisit with gentler settings:
 
 All runs plateau after exhausting training seeds (~50k epochs):
 
-| Run | Final Violations | Final Pass % | Notes |
-|-----|------------------|--------------|-------|
-| Run 2 | 87/429 | 95.43% | Mining + slow curriculum |
-| Run 3 | 80/429 | 95.68% | Mining + fast curriculum |
-| Run 4 | 73/429 | 95.68% | Mining + T4 |
-| Run 5 | 64/429 | 97.22% | No mining |
-| Run 6 | 58/429 | 97.91% | **No mining + lookahead 20** ⭐ |
+| Run | Final Violations | Final Pass % | Lookahead | Notes |
+|-----|------------------|--------------|-----------|-------|
+| Run 2 | 87/429 | 95.43% | 10 | Mining + slow curriculum |
+| Run 3 | 80/429 | 95.68% | 10 | Mining + fast curriculum |
+| Run 4 | 73/429 | 95.68% | 10 | Mining + T4 |
+| Run 5 | 64/429 | 97.22% | 10 | No mining |
+| Run 6 | 58/429 | 97.91% | 20 | No mining |
+| Run 7 | **14/429** | **99.68%** | **100** | **No mining** ⭐ |
 
-Clear trend: simpler training (no mining) + more information (longer lookahead) = better results.
+Clear trend: lookahead is the dominant factor. Increasing from 10→100 reduced violations by 78%.
