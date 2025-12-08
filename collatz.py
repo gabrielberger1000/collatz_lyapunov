@@ -21,6 +21,7 @@ import argparse
 import math
 import os
 import csv
+from functools import partial
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple, Callable, Dict
 
@@ -60,6 +61,7 @@ class TrainConfig:
     # Architecture
     layers: List[int] = field(default_factory=lambda: [128, 128, 128])
     lookahead: int = 10
+    k_only: bool = False  # Use only k-values as features (no log(n), residues, drift)
     
     # Constraints (which future steps to enforce)
     use_t1: bool = True
@@ -120,6 +122,7 @@ class TrainConfig:
         return cls(
             layers=layers,
             lookahead=args.lookahead,
+            k_only=args.k_only,
             use_t1=args.use_t1,
             use_t4=args.use_t4,
             use_t8=args.use_t8,
@@ -504,31 +507,36 @@ class CollatzSampler:
 # FEATURE EXTRACTION
 # =============================================================================
 
-def extract_features(n_list: List[int], device: torch.device, lookahead: int) -> torch.Tensor:
+def extract_features(n_list: List[int], device: torch.device, lookahead: int, k_only: bool = False) -> torch.Tensor:
     """
     Extract neural network input features from a list of integers.
     
-    Features:
+    Features (when k_only=False):
         - log10(n) / 40: Normalized magnitude
         - n mod 3, 9, 27, 81: Residue classes (normalized)
         - drift: Deviation from expected log2(3) behavior
         - k_1, ..., k_lookahead: Normalized valuation sequence
+    
+    Features (when k_only=True):
+        - k_1, ..., k_lookahead: Normalized valuation sequence only
     """
     features = []
     
     for n in n_list:
-        log_val = math.log10(max(1, n)) / LOG10_SCALE
-        
-        mod3 = (n % 3) / 2.0
-        mod9 = (n % 9) / 8.0
-        mod27 = (n % 27) / 26.0
-        mod81 = (n % 81) / 80.0
-        
         k_vals, drift = compute_trajectory_stats(n, lookahead)
-        drift_norm = drift / DRIFT_SCALE
         k_feats = [min(k, MAX_K_CLIP) / float(MAX_K_CLIP) for k in k_vals]
         
-        row = [log_val, mod3, mod9, mod27, mod81, drift_norm] + k_feats
+        if k_only:
+            row = k_feats
+        else:
+            log_val = math.log10(max(1, n)) / LOG10_SCALE
+            mod3 = (n % 3) / 2.0
+            mod9 = (n % 9) / 8.0
+            mod27 = (n % 27) / 26.0
+            mod81 = (n % 81) / 80.0
+            drift_norm = drift / DRIFT_SCALE
+            row = [log_val, mod3, mod9, mod27, mod81, drift_norm] + k_feats
+        
         features.append(row)
     
     return torch.tensor(features, dtype=torch.float32, device=device)
@@ -665,15 +673,16 @@ def find_hard_negatives(
     lookahead: int,
     sampler: CollatzSampler,
     n_samples: int = 10000,
-    n_return: int = 100
+    n_return: int = 100,
+    k_only: bool = False
 ) -> Tuple[List[int], Dict]:
     """Find samples where the model fails most badly."""
     model.eval()
     
     batch = sampler.get_batch(n_samples, hard_ratio=0.5)
     
-    n_vec = extract_features(batch.n, device, lookahead)
-    t1_vec = extract_features(batch.t1, device, lookahead)
+    n_vec = extract_features(batch.n, device, lookahead, k_only)
+    t1_vec = extract_features(batch.t1, device, lookahead, k_only)
     
     with torch.no_grad():
         v_n = model(n_vec).squeeze()
@@ -700,7 +709,8 @@ def evaluate_on_trajectories(
     model: CollatzFeatureNet,
     device: torch.device,
     lookahead: int,
-    test_seeds: List[int]
+    test_seeds: List[int],
+    k_only: bool = False
 ) -> Dict:
     """
     Evaluate model on held-out trajectory seeds.
@@ -715,7 +725,7 @@ def evaluate_on_trajectories(
     
     for seed in test_seeds:
         traj = get_trajectory(seed)
-        feats = extract_features(traj, device, lookahead)
+        feats = extract_features(traj, device, lookahead, k_only)
         
         with torch.no_grad():
             energies = model(feats).cpu().numpy().flatten()
@@ -747,7 +757,8 @@ def evaluate_on_dataset(
     device: torch.device,
     lookahead: int,
     eval_data: EvalDataset,
-    batch_size: int = 4096
+    batch_size: int = 4096,
+    k_only: bool = False
 ) -> Dict:
     """
     Evaluate model on fixed evaluation dataset.
@@ -766,8 +777,8 @@ def evaluate_on_dataset(
         n_batch = eval_data.n[start:end]
         t1_batch = eval_data.t1[start:end]
         
-        n_vec = extract_features(n_batch, device, lookahead)
-        t1_vec = extract_features(t1_batch, device, lookahead)
+        n_vec = extract_features(n_batch, device, lookahead, k_only)
+        t1_vec = extract_features(t1_batch, device, lookahead, k_only)
         
         with torch.no_grad():
             v_n = model(n_vec).cpu().numpy().flatten()
@@ -818,7 +829,8 @@ def quick_eval(
     device: torch.device,
     lookahead: int,
     sampler: CollatzSampler,
-    n_random: int = 1000
+    n_random: int = 1000,
+    k_only: bool = False
 ) -> str:
     """
     Quick lightweight evaluation.
@@ -829,7 +841,7 @@ def quick_eval(
     
     # Check trajectory 27
     traj = get_trajectory(27)
-    feats = extract_features(traj, device, lookahead)
+    feats = extract_features(traj, device, lookahead, k_only)
     with torch.no_grad():
         energies = model(feats).cpu().numpy().flatten()
     
@@ -838,8 +850,8 @@ def quick_eval(
     
     # Check random samples
     batch = sampler.get_batch(n_random, hard_ratio=0.0)
-    n_vec = extract_features(batch.n, device, lookahead)
-    t1_vec = extract_features(batch.t1, device, lookahead)
+    n_vec = extract_features(batch.n, device, lookahead, k_only)
+    t1_vec = extract_features(batch.t1, device, lookahead, k_only)
     
     with torch.no_grad():
         v_n = model(n_vec).cpu().numpy().flatten()
@@ -927,6 +939,7 @@ def train(config: TrainConfig) -> None:
     print(f"Constraints: T1={config.use_t1}, T4={config.use_t4}, T8={config.use_t8}")
     print(f"Target type: {config.target_type} | Split loss: {config.split_loss}")
     print(f"Architecture: {config.layers}")
+    print(f"Features: {'k-values only' if config.k_only else 'full (log(n), residues, drift, k-values)'}")
     print(f"Hard negative mining: {config.mine_negatives}")
     print(f"Test seeds (held out): {config.test_seeds}")
     
@@ -951,7 +964,7 @@ def train(config: TrainConfig) -> None:
     print(f"Training seeds: {len(all_train_seeds)} available")
     
     # Initialize model
-    input_dim = 6 + config.lookahead
+    input_dim = config.lookahead if config.k_only else 6 + config.lookahead
     model = CollatzFeatureNet(input_dim, config.layers).to(device)
     
     n_params = sum(p.numel() for p in model.parameters())
@@ -1001,7 +1014,8 @@ def train(config: TrainConfig) -> None:
         if config.mine_negatives and epoch > 0 and epoch % config.mine_interval == 0:
             hard_negs, mine_stats = find_hard_negatives(
                 model, device, config.lookahead, sampler,
-                n_samples=5000, n_return=config.mine_count
+                n_samples=5000, n_return=config.mine_count,
+                k_only=config.k_only
             )
             sampler.add_mined_negatives(hard_negs)
             print(f"  [Mining] Found {mine_stats['n_violations']} violations, "
@@ -1010,7 +1024,8 @@ def train(config: TrainConfig) -> None:
         
         # Get batch and convert to tensors
         batch = sampler.get_batch(config.batch_size, config.hard_ratio)
-        tensors = batch.to_tensors(device, config.lookahead, extract_features)
+        extract_fn = partial(extract_features, k_only=config.k_only)
+        tensors = batch.to_tensors(device, config.lookahead, extract_fn)
         
         # Forward pass
         v_n = model(tensors['n_vec'])
@@ -1037,7 +1052,7 @@ def train(config: TrainConfig) -> None:
         
         # Quick eval
         if config.quick_eval_interval > 0 and epoch % config.quick_eval_interval == 0:
-            quick_str = quick_eval(model, device, config.lookahead, sampler)
+            quick_str = quick_eval(model, device, config.lookahead, sampler, k_only=config.k_only)
             beta = model.drift_param.item()
             n_seeds = len(sampler.active_seeds)
             n_mined = len(sampler.mined_negatives)
@@ -1048,13 +1063,15 @@ def train(config: TrainConfig) -> None:
         # Full eval
         if epoch > 0 and epoch % config.eval_interval == 0:
             traj_results = evaluate_on_trajectories(
-                model, device, config.lookahead, config.test_seeds
+                model, device, config.lookahead, config.test_seeds,
+                k_only=config.k_only
             )
             
             dataset_results = None
             if eval_data is not None:
                 dataset_results = evaluate_on_dataset(
-                    model, device, config.lookahead, eval_data
+                    model, device, config.lookahead, eval_data,
+                    k_only=config.k_only
                 )
             
             print_full_eval(traj_results, dataset_results, config.test_seeds, epoch)
@@ -1070,13 +1087,15 @@ def train(config: TrainConfig) -> None:
     print("=" * 70)
     
     traj_results = evaluate_on_trajectories(
-        model, device, config.lookahead, config.test_seeds
+        model, device, config.lookahead, config.test_seeds,
+        k_only=config.k_only
     )
     
     dataset_results = None
     if eval_data is not None:
         dataset_results = evaluate_on_dataset(
-            model, device, config.lookahead, eval_data
+            model, device, config.lookahead, eval_data,
+            k_only=config.k_only
         )
     
     print_full_eval(traj_results, dataset_results, config.test_seeds, config.epochs - 1)
@@ -1102,6 +1121,8 @@ def parse_args() -> argparse.Namespace:
                       help="Comma-separated hidden layer dimensions")
     arch.add_argument("--lookahead", type=int, default=10,
                       help="Number of lookahead steps for features")
+    arch.add_argument("--k-only", action="store_true",
+                      help="Use only k-values as features (no log(n), residues, drift)")
     
     # Constraints
     const = parser.add_argument_group("Constraints")
