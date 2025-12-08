@@ -62,6 +62,7 @@ class TrainConfig:
     layers: List[int] = field(default_factory=lambda: [128, 128, 128])
     lookahead: int = 10
     k_only: bool = False  # Use only k-values as features (no log(n), residues, drift)
+    linear: bool = False  # Use linear model (no hidden layers)
     
     # Constraints (which future steps to enforce)
     use_t1: bool = True
@@ -123,6 +124,7 @@ class TrainConfig:
             layers=layers,
             lookahead=args.lookahead,
             k_only=args.k_only,
+            linear=args.linear,
             use_t1=args.use_t1,
             use_t4=args.use_t4,
             use_t8=args.use_t8,
@@ -938,7 +940,7 @@ def train(config: TrainConfig) -> None:
     print(f"Training on: {device}")
     print(f"Constraints: T1={config.use_t1}, T4={config.use_t4}, T8={config.use_t8}")
     print(f"Target type: {config.target_type} | Split loss: {config.split_loss}")
-    print(f"Architecture: {config.layers}")
+    print(f"Architecture: {'linear (no hidden layers)' if config.linear else config.layers}")
     print(f"Features: {'k-values only' if config.k_only else 'full (log(n), residues, drift, k-values)'}")
     print(f"Hard negative mining: {config.mine_negatives}")
     print(f"Test seeds (held out): {config.test_seeds}")
@@ -965,7 +967,8 @@ def train(config: TrainConfig) -> None:
     
     # Initialize model
     input_dim = config.lookahead if config.k_only else 6 + config.lookahead
-    model = CollatzFeatureNet(input_dim, config.layers).to(device)
+    hidden_dims = [] if config.linear else config.layers
+    model = CollatzFeatureNet(input_dim, hidden_dims).to(device)
     
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model parameters: {n_params:,}")
@@ -1123,6 +1126,8 @@ def parse_args() -> argparse.Namespace:
                       help="Number of lookahead steps for features")
     arch.add_argument("--k-only", action="store_true",
                       help="Use only k-values as features (no log(n), residues, drift)")
+    arch.add_argument("--linear", action="store_true",
+                      help="Use linear model (no hidden layers) - tests if k-values combine linearly")
     
     # Constraints
     const = parser.add_argument_group("Constraints")
